@@ -29,6 +29,28 @@ class GradioVideoProcessor:
         self.processor = None
         self.detector = None
     
+    def get_video_duration(self, video_file):
+        """Get video info and return empty duration (let user choose)."""
+        if not video_file:
+            return None
+        
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_file)
+            if not cap.isOpened():
+                return None
+            
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            duration = frame_count / fps if fps > 0 else 0.0
+            cap.release()
+            
+            # Return None (empty) but print the video info for user reference
+            print(f"Video uploaded: {duration:.3f} seconds total ({int(frame_count)} frames at {fps:.2f} FPS)")
+            return None
+        except:
+            return None
+    
     def process_video(self, 
                      video_file, 
                      api_key: str, 
@@ -36,9 +58,9 @@ class GradioVideoProcessor:
                      frames_per_second: float = 1.0,
                      duration: Optional[int] = None,
                      batch_delay: float = 0.1,
-                     persistence_frames: int = 10,
-                     concurrent_workers: int = 5,
-                     progress=gr.Progress()) -> Tuple[str, str, str]:
+                    persistence_frames: int = 10,
+                    concurrent_workers: int = 5,
+                    progress=gr.Progress()) -> str:
         """
         Process video with object detection and return results.
         
@@ -54,13 +76,16 @@ class GradioVideoProcessor:
             progress: Gradio progress tracker
         
         Returns:
-            Tuple of (output_video_path, summary_text, detection_log)
+            Path to output video file
         """
         if not video_file:
-            return None, "❌ Please upload a video file.", ""
+            return None
         
-        if not api_key.strip():
-            return None, "❌ Please enter your Moondream API key.", ""
+        # Debug: Print what we received
+        print(f"DEBUG: Received API key: '{api_key}' (length: {len(api_key) if api_key else 0})")
+        
+        if not api_key or not api_key.strip():
+            return None
         
         # Handle duration - convert 0 or negative to None
         if duration is not None and duration <= 0:
@@ -129,13 +154,14 @@ class GradioVideoProcessor:
             # Generate detection log
             detection_log = self._format_detection_log(detections_list, frame_paths)
             
-            progress(1.0, desc="✅ Processing complete!")
+            progress(1.0, desc="Processing complete!")
             
-            return final_output, summary_text, detection_log
+            return final_output
             
         except Exception as e:
-            error_msg = f"❌ Error during processing: {str(e)}"
-            return None, error_msg, ""
+            error_msg = f"Error during processing: {str(e)}"
+            print(error_msg)
+            return None
         
         finally:
             # Cleanup will be handled by Gradio's temporary file management
@@ -145,18 +171,18 @@ class GradioVideoProcessor:
     def _format_summary(self, summary: dict, object_type: str) -> str:
         """Format detection summary for display."""
         return f"""
-## 📊 Detection Summary
+## Detection Summary
 
 **Object Type:** {object_type.title()}
 
 **Results:**
-- 🎬 Total frames processed: {summary['total_frames']}
-- 🎯 Total objects detected: {summary['total_objects']}
-- ✅ Frames with objects: {summary['frames_with_objects']}
-- 📈 Average objects per frame: {summary['avg_objects_per_frame']:.2f}
-- 📊 Detection rate: {summary['detection_rate']:.1%}
+- Total frames processed: {summary['total_frames']}
+- Total objects detected: {summary['total_objects']}
+- Frames with objects: {summary['frames_with_objects']}
+- Average objects per frame: {summary['avg_objects_per_frame']:.2f}
+- Detection rate: {summary['detection_rate']:.1%}
 
-**Status:** ✅ Processing completed successfully!
+**Status:** Processing completed successfully!
 """
     
     def _format_detection_log(self, detections_list: List[dict], frame_paths: List[str]) -> str:
@@ -192,24 +218,24 @@ def create_interface():
     
     # Define the interface
     with gr.Blocks(title="Video Object Detection with Moondream", 
-                   theme=gr.themes.Soft()) as interface:
+                   theme=gr.themes.Glass()) as interface:
         
         gr.Markdown("""
-        # 🎥 Video Object Detection with Moondream
+        # Video Object Detection with Moondream
         
         Upload a video, enter your Moondream API key, and get object detection overlays!
         
         **Features:**
-        - 🔍 Detect various objects (people, cars, animals, etc.)
-        - 📦 Automatic bounding box overlays
-        - 📊 Detailed detection statistics
-        - 🎬 Download processed video
+        - Detect various objects (people, cars, animals, etc.)
+        - Automatic bounding box overlays
+        - Detailed detection statistics
+        - Download processed video
         """)
         
         with gr.Row():
             with gr.Column(scale=1):
                 # Input section
-                gr.Markdown("## 📤 Upload & Configure")
+                gr.Markdown("## Upload & Configure")
                 
                 video_input = gr.File(
                     label="Upload Video File",
@@ -220,33 +246,34 @@ def create_interface():
                 api_key_input = gr.Textbox(
                     label="Moondream API Key",
                     info="Enter your Moondream API key here",
-                    type="password"
+                    type="password",
+                    elem_id="api_key_input"
                 )
                 
                 object_type_input = gr.Textbox(
                     label="Object Type to Detect",
                     info="Enter any object type (e.g., person, car, dog, bicycle, etc.)",
                     value="person",
-                    placeholder="person"
+                    placeholder="person",
+                    elem_id="object_type_input"
                 )
                 
                 with gr.Row():
                     frames_per_second_input = gr.Number(
                         label="Frames per Second to Analyze",
                         info="How many frames per second to process (e.g., 1 = every 1 second, 0.5 = every 2 seconds)",
-                        value=1.0,
+                        value=15.0,
                         minimum=0.1,
                         maximum=30.0,
-                        step=0.1
+                        step=0.1,
+                        elem_id="frames_per_second_input"
                     )
                     
                     duration_input = gr.Number(
                         label="Duration to Process (seconds)",
                         info="How many seconds of video to process (leave empty for entire video)",
-                        value=None,
-                        minimum=1,
-                        maximum=3600,
-                        step=1
+                        step=1,
+                        elem_id="duration_input"
                     )
                 
                 with gr.Row():
@@ -256,15 +283,17 @@ def create_interface():
                         value=0.5,
                         step=0.1,
                         label="Batch Delay (seconds)",
-                        info="Delay between API calls to avoid rate limiting"
+                        info="Delay between API calls to avoid rate limiting",
+                        elem_id="batch_delay_input"
                     )
                     
                     persistence_frames_input = gr.Number(
                         label="Box Persistence (frames)",
                         info="Keep bounding boxes visible for this many frames after detection stops",
-                        value=10,
+                        value=15,
                         minimum=0,
-                        step=1
+                        step=1,
+                        elem_id="persistence_frames_input"
                     )
                 
                 concurrent_workers_input = gr.Number(
@@ -272,18 +301,19 @@ def create_interface():
                     info="Number of simultaneous API calls",
                     value=1,
                     minimum=1,
-                    step=1
+                    step=1,
+                    elem_id="concurrent_workers_input"
                 )
                 
                 process_btn = gr.Button(
-                    "🚀 Process Video", 
+                    "Process Video", 
                     variant="primary",
                     size="lg"
                 )
             
             with gr.Column(scale=1):
                 # Output section
-                gr.Markdown("## 📥 Results")
+                gr.Markdown("## Results")
                 
                 output_video = gr.File(
                     label="Processed Video with Overlays",
@@ -291,41 +321,47 @@ def create_interface():
                 )
                 
                 summary_output = gr.Markdown(
-                    label="Detection Summary",
                     value="Upload a video and click 'Process Video' to see results here."
                 )
         
         # Detailed log section (collapsible)
-        with gr.Accordion("📋 Detailed Detection Log", open=False):
+        with gr.Accordion("Detailed Detection Log", open=False):
             detection_log = gr.Markdown(
                 value="Detailed detection results will appear here after processing."
             )
         
         # Examples section
-        with gr.Accordion("💡 Usage Tips", open=False):
+        with gr.Accordion("Usage Tips", open=False):
             gr.Markdown("""
-            ### 🔑 Getting Started
+            ### Getting Started
             1. **Get API Key**: Sign up at [Moondream.ai](https://moondream.ai) to get your API key
             2. **Upload Video**: Choose any video file (MP4, AVI, MOV, etc.)
             3. **Select Object**: Choose what type of objects to detect
             4. **Process**: Click the process button and wait for results
             
-            ### 🎯 Object Detection Tips
+            ### Object Detection Tips
             - **Popular objects**: person, car, dog, cat, bicycle
             - **Animals**: horse, sheep, cow, elephant, bear, zebra, giraffe
             - **Vehicles**: truck, bus, motorcycle, airplane, train, boat
             - **Traffic**: traffic light, stop sign
             
-            ### ⚡ Performance Tips
-            - Use **Max Frames** to limit processing for long videos
+            ### Performance Tips
+            - Use **Duration** to limit processing for long videos
             - Increase **Batch Delay** if you hit API rate limits
             - Shorter videos (< 30 seconds) process faster
             
-            ### 📊 Understanding Results
+            ### Understanding Results
             - **Detection Rate**: Percentage of frames with detected objects
-            - **Bounding Boxes**: Red rectangles around detected objects
+            - **Bounding Boxes**: Purple rectangles around detected objects
             - **Confidence Scores**: How certain the AI is about detections
             """)
+        
+        # Set up video upload handler to auto-set duration
+        video_input.change(
+            fn=processor.get_video_duration,
+            inputs=[video_input],
+            outputs=[duration_input]
+        )
         
         # Set up the processing function
         process_btn.click(
@@ -341,11 +377,56 @@ def create_interface():
                 concurrent_workers_input
             ],
             outputs=[
-                output_video,
-                summary_output,
-                detection_log
+                output_video
             ],
             show_progress=True
+        )
+        
+        # Add JavaScript for local storage
+        interface.load(
+            fn=None,
+            js="""
+            function() {
+                setTimeout(function() {
+                    // Function to load and save values
+                    function setupLocalStorage(id, key) {
+                        const element = document.getElementById(id);
+                        if (element) {
+                            const input = element.querySelector('input');
+                            if (input) {
+                                // Load saved value
+                                const savedValue = localStorage.getItem(key);
+                                if (savedValue && savedValue !== 'null' && savedValue !== 'undefined') {
+                                    input.value = savedValue;
+                                    // Trigger change event to update Gradio's internal state
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                                
+                                // Set up auto-save
+                                input.addEventListener('input', function() {
+                                    localStorage.setItem(key, this.value);
+                                });
+                                input.addEventListener('change', function() {
+                                    localStorage.setItem(key, this.value);
+                                });
+                            }
+                        }
+                    }
+                    
+                    // Set up local storage for all fields
+                    setupLocalStorage('api_key_input', 'moondream_api_key');
+                    setupLocalStorage('object_type_input', 'moondream_object_type');
+                    setupLocalStorage('frames_per_second_input', 'moondream_frames_per_second');
+                    setupLocalStorage('duration_input', 'moondream_duration');
+                    setupLocalStorage('batch_delay_input', 'moondream_batch_delay');
+                    setupLocalStorage('persistence_frames_input', 'moondream_persistence_frames');
+                    setupLocalStorage('concurrent_workers_input', 'moondream_concurrent_workers');
+                }, 2000);
+                
+                return [];
+            }
+            """
         )
     
     return interface
@@ -355,9 +436,9 @@ def main():
     """Launch the Gradio interface."""
     interface = create_interface()
     
-    print("🚀 Starting Video Object Detection Web Interface...")
-    print("📝 Make sure you have your Moondream API key ready!")
-    print("🌐 The interface will open in your browser automatically.")
+    print("Starting Video Object Detection Web Interface...")
+    print("Make sure you have your Moondream API key ready!")
+    print("The interface will open in your browser automatically.")
     
     interface.launch(
         server_name="0.0.0.0",  # Allow external access

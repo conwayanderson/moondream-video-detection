@@ -76,37 +76,40 @@ class VideoProcessor:
             frame_interval = 1
             frames_to_extract = min(max_frames or self.total_frames, self.total_frames)
             total_frames_to_check = frames_to_extract
-            print(f"Extracting {frames_to_extract} frames...")
-        
         frame_count = 0
         extracted_count = 0
         
-        with tqdm(total=frames_to_extract, desc="Extracting frames") as pbar:
-            while True:
-                ret, frame = self.cap.read()
-                if not ret:
+        print(f"Extracting {frames_to_extract} frames...")
+        
+        while True:
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+            
+            # Check if we've processed enough frames based on duration
+            if duration is not None and frame_count >= duration * self.fps:
+                break
+            
+            # Check if we should extract this frame based on interval
+            if frame_count % frame_interval == 0:
+                # Save frame
+                frame_filename = f"frame_{extracted_count:06d}.jpg"
+                frame_path = os.path.join(output_dir, frame_filename)
+                cv2.imwrite(frame_path, frame)
+                frame_paths.append(frame_path)
+                frame_indices.append(frame_count)  # Store original frame index
+                extracted_count += 1
+                
+                # Print progress every 20 frames
+                if extracted_count % 20 == 0 or extracted_count == frames_to_extract:
+                    percent = (extracted_count / frames_to_extract) * 100
+                    print(f"Extraction: {extracted_count}/{frames_to_extract} frames ({percent:.1f}%)")
+                
+                # Check max_frames limit (backward compatibility)
+                if max_frames and extracted_count >= max_frames:
                     break
-                
-                # Check if we've processed enough frames based on duration
-                if duration is not None and frame_count >= duration * self.fps:
-                    break
-                
-                # Check if we should extract this frame based on interval
-                if frame_count % frame_interval == 0:
-                    # Save frame
-                    frame_filename = f"frame_{extracted_count:06d}.jpg"
-                    frame_path = os.path.join(output_dir, frame_filename)
-                    cv2.imwrite(frame_path, frame)
-                    frame_paths.append(frame_path)
-                    frame_indices.append(frame_count)  # Store original frame index
-                    extracted_count += 1
-                    pbar.update(1)
-                    
-                    # Check max_frames limit (backward compatibility)
-                    if max_frames and extracted_count >= max_frames:
-                        break
-                
-                frame_count += 1
+            
+            frame_count += 1
         
         print(f"Extracted {len(frame_paths)} frames to {output_dir}")
         return frame_paths, frame_indices
@@ -183,22 +186,27 @@ class VideoProcessor:
         print(f"Detection timeline: {len(detection_map)} analyzed frames, {len(detection_timeline)} frames with overlays (including persistence)")
         
         current_frame = 0
-        with tqdm(total=self.total_frames, desc="Creating video") as pbar:
-            while True:
-                ret, frame = self.cap.read()
-                if not ret:
-                    break
-                
-                # Check if this frame should have overlays (either detection or persistence)
-                if current_frame in detection_timeline:
-                    frame_with_overlay = self._draw_bounding_boxes(frame, detection_timeline[current_frame], object_label)
-                else:
-                    frame_with_overlay = frame
-                
-                # Write frame to output video
-                out.write(frame_with_overlay)
-                current_frame += 1
-                pbar.update(1)
+        print(f"Creating video with {len(detection_timeline)} overlay frames...")
+        
+        while True:
+            ret, frame = self.cap.read()
+            if not ret:
+                break
+            
+            # Check if this frame should have overlays (either detection or persistence)
+            if current_frame in detection_timeline:
+                frame_with_overlay = self._draw_bounding_boxes(frame, detection_timeline[current_frame], object_label)
+            else:
+                frame_with_overlay = frame
+            
+            # Write frame to output video
+            out.write(frame_with_overlay)
+            current_frame += 1
+            
+            # # Print progress every 50 frames
+            # if current_frame % 50 == 0 or current_frame == self.total_frames:
+            #     percent = (current_frame / self.total_frames) * 100
+            #     print(f"Video creation: {current_frame}/{self.total_frames} frames ({percent:.1f}%)")
         
         # Release everything
         out.release()
@@ -206,7 +214,10 @@ class VideoProcessor:
         print(f"Video created successfully: {output_path}")
         return output_path
     
-    def _draw_bounding_boxes(self, frame: np.ndarray, detections: dict, object_label: str = None) -> np.ndarray:
+    def _draw_bounding_boxes(self, frame: np.ndarray, detections: dict, object_label: str = None,
+                           box_color: tuple = (0, 255, 0), box_thickness: int = 3,
+                           text_color: tuple = (255, 255, 255), text_bg_color: tuple = (0, 255, 0),
+                           font_scale: float = 0.7, text_thickness: int = 2) -> np.ndarray:
         """
         Draw bounding boxes on a frame.
         
@@ -214,6 +225,12 @@ class VideoProcessor:
             frame: OpenCV frame (BGR format)
             detections: Detection results from Moondream
             object_label: User-specified object label to display
+            box_color: RGB color for bounding box (default: green)
+            box_thickness: Thickness of bounding box lines
+            text_color: RGB color for text
+            text_bg_color: RGB color for text background
+            font_scale: Scale factor for text size
+            text_thickness: Thickness of text
         
         Returns:
             Frame with bounding boxes drawn
@@ -232,8 +249,16 @@ class VideoProcessor:
             x_max = int(obj["x_max"] * self.width)
             y_max = int(obj["y_max"] * self.height)
             
-            # Draw bounding box
-            cv2.rectangle(frame_copy, (x_min, y_min), (x_max, y_max), (0, 0, 255), 2)
+            # Bright purple color (BGR format)
+            purple_color = (255, 0, 255)
+            
+            # Draw 10% opacity fill inside bounding box
+            overlay = frame_copy.copy()
+            cv2.rectangle(overlay, (x_min, y_min), (x_max, y_max), purple_color, -1)
+            cv2.addWeighted(overlay, 0.1, frame_copy, 0.9, 0, frame_copy)
+            
+            # Draw bounding box with bright purple
+            cv2.rectangle(frame_copy, (x_min, y_min), (x_max, y_max), purple_color, box_thickness)
             
             # Add label - use user-specified label if provided, otherwise use API response
             if object_label:
@@ -244,24 +269,31 @@ class VideoProcessor:
             confidence = obj.get("confidence", 0.0)
             text = f"{label}: {confidence:.2f}" if confidence > 0 else label
             
-            # Calculate text size and position
+            # Calculate text size and position (2x bigger font)
+            large_font_scale = font_scale * 2
             (text_width, text_height), baseline = cv2.getTextSize(
-                text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+                text, cv2.FONT_HERSHEY_SIMPLEX, large_font_scale, text_thickness
             )
             
-            # Draw text background
+            # Add padding around text
+            padding = 8
+            text_bg_width = text_width + (2 * padding)
+            text_bg_height = text_height + baseline + (2 * padding)
+            
+            # Draw text background with bright purple
             cv2.rectangle(
                 frame_copy, 
-                (x_min, y_min - text_height - baseline - 5),
-                (x_min + text_width, y_min),
-                (0, 0, 255), 
+                (x_min, y_min - text_bg_height),
+                (x_min + text_bg_width, y_min),
+                purple_color, 
                 -1
             )
             
-            # Draw text
+            # Draw text (2x bigger, white)
             cv2.putText(
-                frame_copy, text, (x_min, y_min - baseline - 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
+                frame_copy, text, 
+                (x_min + padding, y_min - baseline - padding),
+                cv2.FONT_HERSHEY_SIMPLEX, large_font_scale, (255, 255, 255), text_thickness
             )
         
         return frame_copy

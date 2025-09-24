@@ -47,7 +47,6 @@ class MoondreamDetector:
         detections_list = [None] * len(frame_paths)
         completed_count = 0
         
-        print(f"Detecting '{object_type}' in {len(frame_paths)} frames using {max_concurrent} concurrent workers...")
         
         def process_single_frame(frame_index_and_path):
             """Process a single frame and return (index, result)"""
@@ -75,49 +74,32 @@ class MoondreamDetector:
                         if attempt < max_retries - 1:
                             # Exponential backoff for rate limit errors
                             sleep_time = retry_delay * (2 ** attempt)
-                            print(f"Rate limit hit for frame {frame_index}, retrying in {sleep_time}s...")
                             time.sleep(sleep_time)
                             continue
-                        else:
-                            print(f"Max retries exceeded for frame {frame_path}: {error_msg}")
-                    else:
-                        print(f"Error processing frame {frame_path}: {error_msg}")
+                        # Only print on final failure, not every retry
+                    # Reduce error spam - only print non-rate-limit errors
                     
                     return frame_index, {"objects": [], "request_id": None}
         
-        # Create progress bar
-        with tqdm(total=len(frame_paths), desc=f"Detecting {object_type}") as pbar:
-            # Use ThreadPoolExecutor for concurrent API calls
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent) as executor:
-                # Submit all tasks
-                frame_tasks = [(i, path) for i, path in enumerate(frame_paths)]
-                future_to_index = {
-                    executor.submit(process_single_frame, task): task[0] 
-                    for task in frame_tasks
-                }
-                
-                # Process completed tasks as they finish
-                for future in concurrent.futures.as_completed(future_to_index):
-                    frame_index, result = future.result()
-                    detections_list[frame_index] = result
-                    
-                    # Update progress bar
-                    with self.progress_lock:
-                        completed_count += 1
-                        num_objects = len(result.get("objects", []))
-                        pbar.set_postfix({
-                            "completed": completed_count,
-                            "objects": num_objects
-                        })
-                        pbar.update(1)
+        # Use ThreadPoolExecutor for concurrent API calls
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            # Submit all tasks
+            frame_tasks = [(i, path) for i, path in enumerate(frame_paths)]
+            future_to_index = {
+                executor.submit(process_single_frame, task): task[0] 
+                for task in frame_tasks
+            }
+            
+            # Process completed tasks as they finish (silent - progress handled by Gradio)
+            for future in concurrent.futures.as_completed(future_to_index):
+                frame_index, result = future.result()
+                detections_list[frame_index] = result
+                completed_count += 1
         
         # Print summary
         total_objects = sum(len(d.get("objects", [])) for d in detections_list)
         frames_with_objects = sum(1 for d in detections_list if len(d.get("objects", [])) > 0)
         
-        print(f"Detection complete!")
-        print(f"Total objects detected: {total_objects}")
-        print(f"Frames with objects: {frames_with_objects}/{len(frame_paths)}")
         
         return detections_list
     
