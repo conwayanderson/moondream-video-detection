@@ -118,9 +118,7 @@ class VideoProcessor:
                                  output_path: str = "output_with_detections.mp4",
                                  frame_indices: Optional[List[int]] = None,
                                  object_label: str = None,
-                                 persistence_frames: int = 0,
-                                 overlay_color: str = "#8A2BE2",
-                                 label_size: float = 2.0) -> str:
+                                 persistence_frames: int = 0) -> str:
         """
         Create a new video with bounding box overlays, preserving original timing.
         
@@ -131,8 +129,6 @@ class VideoProcessor:
             frame_indices: List of original frame indices for the extracted frames
             object_label: User-specified object label to display on bounding boxes
             persistence_frames: Number of frames to keep boxes visible after detection stops
-            overlay_color: Color for bounding boxes and text (hex format)
-            label_size: Size multiplier for text labels
         
         Returns:
             Path to the created video file
@@ -199,7 +195,7 @@ class VideoProcessor:
             
             # Check if this frame should have overlays (either detection or persistence)
             if current_frame in detection_timeline:
-                frame_with_overlay = self._draw_bounding_boxes(frame, detection_timeline[current_frame], object_label, overlay_color, label_size)
+                frame_with_overlay = self._draw_bounding_boxes(frame, detection_timeline[current_frame], object_label)
             else:
                 frame_with_overlay = frame
             
@@ -219,76 +215,50 @@ class VideoProcessor:
         return output_path
     
     def _draw_bounding_boxes(self, frame: np.ndarray, detections: dict, object_label: str = None,
-                           overlay_color: str = "#8A2BE2", label_size: float = 2.0) -> np.ndarray:
+                           box_color: tuple = (0, 255, 0), box_thickness: int = 3,
+                           text_color: tuple = (255, 255, 255), text_bg_color: tuple = (0, 255, 0),
+                           font_scale: float = 0.7, text_thickness: int = 2) -> np.ndarray:
         """
-        Draw high-resolution bounding boxes on a frame.
+        Draw bounding boxes on a frame.
         
         Args:
             frame: OpenCV frame (BGR format)
             detections: Detection results from Moondream
             object_label: User-specified object label to display
-            overlay_color: Color for bounding boxes and text (hex format)
-            label_size: Size multiplier for text labels
+            box_color: RGB color for bounding box (default: green)
+            box_thickness: Thickness of bounding box lines
+            text_color: RGB color for text
+            text_bg_color: RGB color for text background
+            font_scale: Scale factor for text size
+            text_thickness: Thickness of text
         
         Returns:
-            Frame with high-resolution bounding boxes drawn
+            Frame with bounding boxes drawn
         """
-        # Render at 2x resolution for better quality
-        scale_factor = 2.0
-        original_height, original_width = frame.shape[:2]
-        upscaled_width = int(original_width * scale_factor)
-        upscaled_height = int(original_height * scale_factor)
-        
-        # Upscale frame using high-quality interpolation
-        frame_upscaled = cv2.resize(frame, (upscaled_width, upscaled_height), interpolation=cv2.INTER_CUBIC)
-        frame_copy = frame_upscaled.copy()
+        frame_copy = frame.copy()
         
         if not detections or "objects" not in detections:
-            # Scale back down to original size
-            return cv2.resize(frame_copy, (original_width, original_height), interpolation=cv2.INTER_AREA)
-        
-        # Convert color to BGR with proper format handling
-        try:
-            if overlay_color.startswith('rgba('):
-                # Parse RGBA format: rgba(r, g, b, a)
-                rgba_str = overlay_color[5:-1]  # Remove 'rgba(' and ')'
-                rgba_values = [float(x.strip()) for x in rgba_str.split(',')]
-                r, g, b = int(rgba_values[0]), int(rgba_values[1]), int(rgba_values[2])
-                bgr_color = (b, g, r)  # Convert RGB to BGR
-            elif overlay_color.startswith('#'):
-                # Parse hex format: #RRGGBB
-                hex_color = overlay_color.lstrip('#')
-                if len(hex_color) != 6:
-                    raise ValueError(f"Invalid hex color length: {len(hex_color)}")
-                rgb_color = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-                bgr_color = (rgb_color[2], rgb_color[1], rgb_color[0])  # Convert RGB to BGR
-            else:
-                raise ValueError(f"Unsupported color format: {overlay_color}")
-        except (ValueError, IndexError) as e:
-            print(f"Error parsing color '{overlay_color}': {e}. Using default purple.")
-            bgr_color = (138, 43, 226)  # Default bright purple in BGR
-        
-        # Scale parameters for upscaled rendering
-        box_thickness = max(int(4 * scale_factor), int(3 * label_size * scale_factor))
-        font_scale = 0.6 * label_size * scale_factor  # Scale font for upscaled frame
-        text_thickness = max(int(2 * scale_factor), int(2 * label_size * scale_factor))
+            return frame_copy
         
         objects = detections["objects"]
         
         for obj in objects:
-            # Scale coordinates to upscaled frame
-            x_min = int(round(obj["x_min"] * self.width * scale_factor))
-            y_min = int(round(obj["y_min"] * self.height * scale_factor))
-            x_max = int(round(obj["x_max"] * self.width * scale_factor))
-            y_max = int(round(obj["y_max"] * self.height * scale_factor))
+            # Convert normalized coordinates to pixel values
+            x_min = int(obj["x_min"] * self.width)
+            y_min = int(obj["y_min"] * self.height)
+            x_max = int(obj["x_max"] * self.width)
+            y_max = int(obj["y_max"] * self.height)
+            
+            # Bright purple color (BGR format)
+            purple_color = (255, 0, 255)
             
             # Draw 10% opacity fill inside bounding box
             overlay = frame_copy.copy()
-            cv2.rectangle(overlay, (x_min, y_min), (x_max, y_max), bgr_color, -1)
+            cv2.rectangle(overlay, (x_min, y_min), (x_max, y_max), purple_color, -1)
             cv2.addWeighted(overlay, 0.1, frame_copy, 0.9, 0, frame_copy)
             
-            # Draw bounding box with anti-aliasing for smoother lines
-            cv2.rectangle(frame_copy, (x_min, y_min), (x_max, y_max), bgr_color, box_thickness, cv2.LINE_AA)
+            # Draw bounding box with bright purple
+            cv2.rectangle(frame_copy, (x_min, y_min), (x_max, y_max), purple_color, box_thickness)
             
             # Add label - use user-specified label if provided, otherwise use API response
             if object_label:
@@ -299,36 +269,34 @@ class VideoProcessor:
             confidence = obj.get("confidence", 0.0)
             text = f"{label}: {confidence:.2f}" if confidence > 0 else label
             
-            # Use standard font for consistency
-            font_face = cv2.FONT_HERSHEY_SIMPLEX
+            # Calculate text size and position (2x bigger font)
+            large_font_scale = font_scale * 2
             (text_width, text_height), baseline = cv2.getTextSize(
-                text, font_face, font_scale, text_thickness
+                text, cv2.FONT_HERSHEY_SIMPLEX, large_font_scale, text_thickness
             )
             
-            # Scale padding for upscaled frame
-            padding = int(8 * scale_factor)
+            # Add padding around text
+            padding = 8
             text_bg_width = text_width + (2 * padding)
             text_bg_height = text_height + baseline + (2 * padding)
             
-            # Draw text background with smooth edges
+            # Draw text background with bright purple
             cv2.rectangle(
                 frame_copy, 
                 (x_min, y_min - text_bg_height),
                 (x_min + text_bg_width, y_min),
-                bgr_color, 
-                -1,
-                cv2.LINE_AA
+                purple_color, 
+                -1
             )
             
-            # Draw text with anti-aliasing for better quality
+            # Draw text (2x bigger, white)
             cv2.putText(
                 frame_copy, text, 
                 (x_min + padding, y_min - baseline - padding),
-                font_face, font_scale, (255, 255, 255), text_thickness, cv2.LINE_AA
+                cv2.FONT_HERSHEY_SIMPLEX, large_font_scale, (255, 255, 255), text_thickness
             )
         
-        # Scale back down to original size for final output
-        return cv2.resize(frame_copy, (original_width, original_height), interpolation=cv2.INTER_AREA)
+        return frame_copy
     
     def cleanup_frames(self, frame_paths: List[str]):
         """

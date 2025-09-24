@@ -58,11 +58,9 @@ class GradioVideoProcessor:
                      frames_per_second: float = 1.0,
                      duration: Optional[int] = None,
                      batch_delay: float = 0.1,
-                     persistence_frames: int = 10,
-                     concurrent_workers: int = 5,
-                     overlay_color: str = "#8A2BE2",
-                     label_size: float = 2.0,
-                     progress=gr.Progress()) -> Tuple[str, str, str]:
+                    persistence_frames: int = 10,
+                    concurrent_workers: int = 5,
+                    progress=gr.Progress()) -> str:
         """
         Process video with object detection and return results.
         
@@ -75,21 +73,19 @@ class GradioVideoProcessor:
             batch_delay: Delay between API calls
             persistence_frames: Number of frames to keep boxes visible after detection stops
             concurrent_workers: Number of concurrent API workers
-            overlay_color: Color for bounding boxes and text (hex format)
-            label_size: Size multiplier for text labels
             progress: Gradio progress tracker
         
         Returns:
-            Tuple of (output_video_path, summary_text, detection_log)
+            Path to output video file
         """
         if not video_file:
-            return None, "Please upload a video file.", ""
+            return None
         
         # Debug: Print what we received
         print(f"DEBUG: Received API key: '{api_key}' (length: {len(api_key) if api_key else 0})")
         
         if not api_key or not api_key.strip():
-            return None, "Please enter your Moondream API key.", ""
+            return None
         
         # Handle duration - convert 0 or negative to None
         if duration is not None and duration <= 0:
@@ -146,9 +142,7 @@ class GradioVideoProcessor:
                 output_path=output_path,
                 frame_indices=frame_indices,
                 object_label=object_type,
-                persistence_frames=persistence_frames,
-                overlay_color=overlay_color,
-                label_size=label_size
+                persistence_frames=persistence_frames
             )
             
             progress(0.95, desc="Generating summary...")
@@ -162,12 +156,12 @@ class GradioVideoProcessor:
             
             progress(1.0, desc="Processing complete!")
             
-            return final_output, summary_text, detection_log
+            return final_output
             
         except Exception as e:
             error_msg = f"Error during processing: {str(e)}"
             print(error_msg)
-            return None, error_msg, ""
+            return None
         
         finally:
             # Cleanup will be handled by Gradio's temporary file management
@@ -311,26 +305,6 @@ def create_interface():
                     elem_id="concurrent_workers_input"
                 )
                 
-                # Visual customization options
-                gr.Markdown("### Visual Customization")
-                
-                overlay_color_input = gr.ColorPicker(
-                    label="Overlay Color",
-                    info="Color for bounding boxes and text",
-                    value="#8A2BE2",  # Bright purple default
-                    elem_id="overlay_color_input"
-                )
-                
-                label_size_input = gr.Slider(
-                    label="Label Size",
-                    info="Size multiplier for text labels",
-                    minimum=0.5,
-                    maximum=3.0,
-                    value=2.0,
-                    step=0.1,
-                    elem_id="label_size_input"
-                )
-                
                 process_btn = gr.Button(
                     "Process Video", 
                     variant="primary",
@@ -400,14 +374,10 @@ def create_interface():
                 duration_input,
                 batch_delay_input,
                 persistence_frames_input,
-                concurrent_workers_input,
-                overlay_color_input,
-                label_size_input
+                concurrent_workers_input
             ],
             outputs=[
-                output_video,
-                summary_output,
-                detection_log
+                output_video
             ],
             show_progress=True
         )
@@ -452,8 +422,6 @@ def create_interface():
                     setupLocalStorage('batch_delay_input', 'moondream_batch_delay');
                     setupLocalStorage('persistence_frames_input', 'moondream_persistence_frames');
                     setupLocalStorage('concurrent_workers_input', 'moondream_concurrent_workers');
-                    setupLocalStorage('overlay_color_input', 'moondream_overlay_color');
-                    setupLocalStorage('label_size_input', 'moondream_label_size');
                 }, 2000);
                 
                 return [];
