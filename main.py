@@ -139,7 +139,9 @@ def main():
             output_path=args.output,
             frame_indices=frame_indices,
             object_label=args.object,
-            persistence_frames=0  # Default no persistence for CLI
+            persistence_frames=0,  # Default no persistence for CLI
+            overlay_color="#8A2BE2",  # Default bright purple
+            label_size=2.0  # Default 2x size
         )
         
         # Step 7: Clean up frames if requested
