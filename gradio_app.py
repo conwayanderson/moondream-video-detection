@@ -16,9 +16,15 @@ import tempfile
 import shutil
 from typing import Optional, Tuple, List
 import time
+import uuid
+from datetime import datetime
 
 from video_processor import VideoProcessor
 from moondream_detector import MoondreamDetector
+
+# Create persistent outputs directory
+OUTPUTS_DIR = os.path.join(os.getcwd(), "outputs")
+os.makedirs(OUTPUTS_DIR, exist_ok=True)
 
 
 class GradioVideoProcessor:
@@ -92,12 +98,18 @@ class GradioVideoProcessor:
             duration = None
         
         try:
-            # Create temporary directory
+            # Create temporary directory for processing
             self.temp_dir = tempfile.mkdtemp()
             
             # Copy uploaded file to temp directory
             video_path = os.path.join(self.temp_dir, "input_video.mp4")
             shutil.copy2(video_file, video_path)
+            
+            # Generate unique filename for persistent output
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            unique_id = str(uuid.uuid4())[:8]
+            output_filename = f"detection_{object_type}_{timestamp}_{unique_id}.mp4"
+            persistent_output_path = os.path.join(OUTPUTS_DIR, output_filename)
             
             progress(0.1, desc="Initializing video processor...")
             
@@ -134,12 +146,11 @@ class GradioVideoProcessor:
             
             progress(0.8, desc="Creating output video with overlays...")
             
-            # Create output video
-            output_path = os.path.join(self.temp_dir, "output_with_detections.mp4")
+            # Create output video in persistent location
             final_output = self.processor.create_video_with_overlays(
                 frame_paths=frame_paths,
                 detections_list=detections_list,
-                output_path=output_path,
+                output_path=persistent_output_path,
                 frame_indices=frame_indices,
                 object_label=object_type,
                 persistence_frames=persistence_frames
@@ -156,7 +167,8 @@ class GradioVideoProcessor:
             
             progress(1.0, desc="Processing complete!")
             
-            return final_output
+            # Return the file path - Gradio should detect it's a new file
+            return persistent_output_path
             
         except Exception as e:
             error_msg = f"Error during processing: {str(e)}"
@@ -209,6 +221,62 @@ class GradioVideoProcessor:
             log_lines.append("")  # Empty line
         
         return "\n".join(log_lines)
+
+
+def get_existing_videos():
+    """Get list of existing processed videos."""
+    try:
+        videos = []
+        for filename in os.listdir(OUTPUTS_DIR):
+            if filename.endswith('.mp4'):
+                filepath = os.path.join(OUTPUTS_DIR, filename)
+                # Parse filename to extract info
+                # Format: detection_{object_type}_{timestamp}_{unique_id}.mp4
+                if filename.startswith('detection_'):
+                    # Remove 'detection_' prefix and '.mp4' suffix
+                    name_part = filename[10:-4]  # Remove 'detection_' and '.mp4'
+                    
+                    # Find the timestamp pattern (YYYYMMDD_HHMMSS)
+                    import re
+                    timestamp_pattern = r'(\d{8}_\d{6})_([a-f0-9]{8})$'
+                    match = re.search(timestamp_pattern, name_part)
+                    
+                    if match:
+                        timestamp_str = match.group(1)
+                        unique_id = match.group(2)
+                        # Everything before the timestamp is the object type
+                        object_type = name_part[:match.start()].rstrip('_')
+                        
+                        # Format timestamp for display
+                        try:
+                            dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                            display_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        except:
+                            display_time = timestamp_str
+                        
+                        videos.append({
+                            'filename': filename,
+                            'filepath': filepath,
+                            'object_type': object_type,
+                            'timestamp': display_time,
+                            'display_name': f"{object_type} detection - {display_time}"
+                        })
+                    else:
+                        # Fallback for files that don't match expected pattern
+                        videos.append({
+                            'filename': filename,
+                            'filepath': filepath,
+                            'object_type': 'unknown',
+                            'timestamp': 'unknown',
+                            'display_name': f"Video - {filename}"
+                        })
+        
+        # Sort by filename (newest first, since timestamp is in filename)
+        videos.sort(key=lambda x: x['filename'], reverse=True)
+        return videos
+    except Exception as e:
+        print(f"Error getting existing videos: {e}")
+        return []
 
 
 def create_interface():
@@ -323,6 +391,63 @@ def create_interface():
                 summary_output = gr.Markdown(
                     value="Upload a video and click 'Process Video' to see results here."
                 )
+        
+        # Existing videos section
+        with gr.Accordion("📁 Previous Results", open=False):
+            gr.Markdown("### Browse Previously Processed Videos")
+            
+            def refresh_video_list():
+                videos = get_existing_videos()
+                if videos:
+                    choices = [(v['display_name'], v['filepath']) for v in videos]
+                    return gr.Dropdown(choices=choices, value=None, label="Select a previous video")
+                else:
+                    return gr.Dropdown(choices=[], value=None, label="No previous videos found")
+            
+            existing_video_dropdown = refresh_video_list()
+            
+            refresh_btn = gr.Button("🔄 Refresh List", size="sm")
+            
+            existing_video_player = gr.File(
+                label="Selected Previous Video",
+                interactive=False
+            )
+            
+            def load_existing_video(selected_path):
+                if selected_path and os.path.exists(selected_path):
+                    print(f"Loading existing video: {selected_path}")
+                    # Copy to a temporary location with a clean filename for better Gradio handling
+                    import tempfile
+                    import shutil
+                    
+                    try:
+                        # Create a temporary file with a clean name
+                        temp_dir = tempfile.mkdtemp()
+                        clean_filename = os.path.basename(selected_path).replace(' ', '_')
+                        temp_path = os.path.join(temp_dir, clean_filename)
+                        shutil.copy2(selected_path, temp_path)
+                        return temp_path
+                    except Exception as e:
+                        print(f"Error creating temp file: {e}")
+                        # Fallback to original path
+                        return selected_path
+                return None
+            
+            def refresh_dropdown():
+                return refresh_video_list()
+            
+            # Connect the dropdown to video player
+            existing_video_dropdown.change(
+                fn=load_existing_video,
+                inputs=[existing_video_dropdown],
+                outputs=[existing_video_player]
+            )
+            
+            # Connect refresh button
+            refresh_btn.click(
+                fn=refresh_dropdown,
+                outputs=[existing_video_dropdown]
+            )
         
         # Detailed log section (collapsible)
         with gr.Accordion("Detailed Detection Log", open=False):
